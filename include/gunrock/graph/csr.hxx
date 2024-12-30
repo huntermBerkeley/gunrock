@@ -15,6 +15,9 @@
 #include <thrust/execution_policy.h>
 #include <thrust/swap.h>
 
+#include <caching/pointers/set_cache.cuh>
+#include <caching/pointers/host_device_allocator.cuh>
+
 namespace gunrock {
 namespace graph {
 
@@ -33,7 +36,12 @@ using namespace memory;
 template <memory_space_t space,
           typename vertex_t,
           typename edge_t,
-          typename weight_t>
+          typename weight_t, typename cache_type=caching::set_cache<64, 16>>
+
+// template <memory_space_t space,
+//           typename vertex_t,
+//           typename edge_t,
+//           typename weight_t, typename cache_type=caching::device_allocator>
 class graph_csr_t {
   using vertex_type = vertex_t;
   using edge_type = edge_t;
@@ -41,9 +49,15 @@ class graph_csr_t {
 
   using vertex_pair_type = vertex_pair_t<vertex_type>;
 
+  using offset_type = typename cache_type::pointer_type<edge_type>;
+
+  using index_type = typename cache_type::pointer_type<vertex_type>;
+  using value_type = typename cache_type::pointer_type<weight_type>;
+
+
  public:
   __host__ __device__ graph_csr_t()
-      : offsets(nullptr), indices(nullptr), values(nullptr) {}
+      : offsets(nullptr, nullptr), indices(nullptr, nullptr), values(nullptr, nullptr) {}
 
   // Disable copy ctor and assignment operator.
   // We do not want to let user copy only a slice.
@@ -82,12 +96,17 @@ class graph_csr_t {
 
   __host__ __device__ __forceinline__ vertex_type
   get_destination_vertex(edge_type const& e) const {
-    return thread::load(&indices[e]);
+
+
+    return thread::load<index_type, vertex_type>(indices, e);
+    //return thread::load(&indices[e]);
   }
 
   __host__ __device__ __forceinline__ edge_type
   get_starting_edge(vertex_type const& v) const {
-    return thread::load(&offsets[v]);
+
+    return thread::load<offset_type, edge_type>(offsets, v);
+    //return thread::load(&offsets[v]);
   }
 
   __host__ __device__ __forceinline__ vertex_pair_type
@@ -174,7 +193,9 @@ class graph_csr_t {
 
   __host__ __device__ __forceinline__ weight_type
   get_edge_weight(edge_type const& e) const {
-    return thread::load(&values[e]);
+
+    return thread::load<value_type, weight_type>(values, e);
+    //return thread::load(&values[e]);
   }
 
   // Representation specific functions
@@ -220,9 +241,45 @@ class graph_csr_t {
     this->number_of_vertices = csr.number_of_rows;
     this->number_of_edges = csr.number_of_nonzeros;
     // Set raw pointers
-    offsets = raw_pointer_cast(csr.row_offsets.data());
-    indices = raw_pointer_cast(csr.column_indices.data());
-    values = raw_pointer_cast(csr.nonzero_values.data());
+
+    printf("Protected set is called\n");
+
+    cache_type * cache = cache_type::generate_on_device(1024ULL*14ULL*1024ULL);
+
+
+  
+    // index_t number_of_rows;
+    // index_t number_of_columns;
+    // offset_t number_of_nonzeros;
+
+    //vertex, edge, weight
+    //index offset value
+
+    //row offsets - offset_t
+
+    //column indices - index_t
+
+    //nonzero_values - value_t
+
+    printf("Init offsets with %llu\n rows.\n", csr.number_of_nonzeros);
+
+    edge_type * host_edges = gallatin::utils::get_host_version<edge_type>(csr.number_of_rows+1);
+
+    edge_type * thrust_edges = thrust::raw_pointer_cast(csr.row_offsets.data());
+
+    cudaMemcpy(host_edges, thrust_edges, sizeof(edge_type)*(csr.number_of_rows+1), cudaMemcpyHostToHost);
+
+    vertex_type * host_indices = gallatin::utils::get_host_version<vertex_type>(csr.number_of_nonzeros);
+
+    cudaMemcpy(host_indices, thrust::raw_pointer_cast(csr.column_indices.data()), sizeof(vertex_type)*csr.number_of_nonzeros, cudaMemcpyHostToHost);
+
+    weight_type * host_values = gallatin::utils::get_host_version<weight_type>(csr.number_of_nonzeros);
+
+    cudaMemcpy(host_values, thrust::raw_pointer_cast(csr.nonzero_values.data()), sizeof(weight_type)*csr.number_of_nonzeros, cudaMemcpyHostToHost);
+
+    offsets = offset_type(host_edges, cache);
+    indices = index_type(host_indices, cache);
+    values = value_type(host_values, cache) ;
   }
 
  private:
@@ -230,9 +287,10 @@ class graph_csr_t {
   vertex_type number_of_vertices;
   edge_type number_of_edges;
 
-  edge_type* offsets;
-  vertex_type* indices;
-  weight_type* values;
+
+  offset_type offsets;
+  index_type indices;
+  value_type values;
 
 };  // struct graph_csr_t
 

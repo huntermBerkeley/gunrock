@@ -86,6 +86,18 @@ __host__ __device__ __forceinline__ type_t add(type_t* address, type_t value) {
 #endif
 }
 
+template <>
+__host__ __device__ __forceinline__ uint64_t add(uint64_t* address, uint64_t value) {
+#ifdef __CUDA_ARCH__
+  return atomicAdd((unsigned long long int *)address, (unsigned long long int) value);
+#else
+  // use std::atomic::fetch_add();
+  auto old_value = *address;
+  *address += value;
+  return old_value;
+#endif
+}
+
 template <typename type_t>
 __host__ __device__ __forceinline__ type_t min(type_t* address, type_t value) {
 #ifdef __CUDA_ARCH__

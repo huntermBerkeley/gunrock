@@ -109,7 +109,7 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
 
       // Simpler logic for the above.
       auto old_distance =
-          math::atomic::min(&distances[neighbor], iteration + 1);
+          math::atomic::min((uint64_t *) &distances[neighbor], (uint64_t) (iteration + 1));
       return (iteration + 1 < old_distance);
     };
 

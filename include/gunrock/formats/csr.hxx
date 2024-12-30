@@ -8,6 +8,11 @@
 
 #include <thrust/transform.h>
 
+#include <caching/pointers/progress.cuh>
+
+#include <iostream>
+#include <fstream>
+
 namespace gunrock {
 namespace format {
 
@@ -80,6 +85,8 @@ struct csr_t {
    */
   csr_t<space, index_t, offset_t, value_t> from_coo(
       const coo_t<memory_space_t::host, index_t, offset_t, value_t>& coo) {
+
+    printf("Reading from COO\n");
     number_of_rows = coo.number_of_rows;
     number_of_columns = coo.number_of_columns;
     number_of_nonzeros = coo.number_of_nonzeros;
@@ -97,6 +104,7 @@ struct csr_t {
     Aj.resize(number_of_nonzeros);
     Ax.resize(number_of_nonzeros);
 
+    printf("CSR Allocated\n");
     // Ap = _Ap.data();
     // Aj = _Aj.data();
     // Ax = _Ax.data();
@@ -135,6 +143,85 @@ struct csr_t {
     row_offsets = Ap;
     column_indices = Aj;
     nonzero_values = Ax;
+
+    printf("Done\n");
+
+    return *this;  // CSR representation (with possible duplicates)
+  }
+
+  csr_t<space, index_t, offset_t, value_t> from_coo_large(
+      const coo_no_vector<memory_space_t::host, index_t, offset_t, value_t>& coo) {
+
+    printf("Reading from COO\n");
+    number_of_rows = coo.number_of_rows;
+    number_of_columns = coo.number_of_columns;
+    number_of_nonzeros = coo.number_of_nonzeros;
+
+    // Allocate space for vectors
+    vector_t<offset_t, memory_space_t::host> Ap;
+    vector_t<index_t, memory_space_t::host> Aj;
+    vector_t<value_t, memory_space_t::host> Ax;
+
+    // offset_t* Ap;
+    // index_t* Aj;
+    // value_t* Ax;
+
+    Ap.resize(number_of_rows + 1);
+    Aj.resize(number_of_nonzeros);
+    Ax.resize(number_of_nonzeros);
+
+    // Ap = _Ap.data();
+    // Aj = _Aj.data();
+    // Ax = _Ax.data();
+
+    // compute number of non-zero entries per row of A.
+    for (offset_t n = 0; n < number_of_nonzeros; ++n) {
+      ++Ap[coo.row_indices[n]];
+    }
+
+    printf("CSR [1/3]\n");
+
+    // cumulative sum the nnz per row to get row_offsets[].
+    for (index_t i = 0, sum = 0; i < number_of_rows; ++i) {
+      index_t temp = Ap[i];
+      Ap[i] = sum;
+      sum += temp;
+      display_progress(i, number_of_rows, .01);
+    }
+
+    end_bar(number_of_rows);
+    Ap[number_of_rows] = number_of_nonzeros;
+
+    printf("CSR [2/3]\n");
+    // write coordinate column indices and nonzero values into CSR's
+    // column indices and nonzero values.
+    for (offset_t n = 0; n < number_of_nonzeros; ++n) {
+      index_t row = coo.row_indices[n];
+      index_t dest = Ap[row];
+
+      Aj[dest] = coo.column_indices[n];
+      Ax[dest] = coo.nonzero_values[n];
+
+      ++Ap[row];
+      display_progress(n, number_of_nonzeros, .01);
+    }
+    end_bar(number_of_nonzeros);
+
+    printf("CSR [3/3]\n");
+    for (index_t i = 0, last = 0; i <= number_of_rows; ++i) {
+      index_t temp = Ap[i];
+      Ap[i] = last;
+      last = temp;
+
+      display_progress(i, number_of_rows, .01);
+    }
+    end_bar(number_of_rows);
+
+    row_offsets = Ap;
+    column_indices = Aj;
+    nonzero_values = Ax;
+
+    printf("Done with CSR\n");
 
     return *this;  // CSR representation (with possible duplicates)
   }
@@ -189,6 +276,8 @@ struct csr_t {
           fread(memory::raw_pointer_cast(nonzero_values.data()),
                 sizeof(value_t), number_of_nonzeros, file) != 0);
     }
+
+    fclose(file);
   }
 
   void write_binary(std::string filename) {
@@ -225,6 +314,130 @@ struct csr_t {
     }
 
     fclose(file);
+  }
+
+  template <typename T>
+  void filewrite(std::ofstream & file, T data){
+    file.write(reinterpret_cast<char*>(&data), sizeof(T));
+  }
+
+  template <typename T>
+  void filewrite_array(std::ofstream & file, T * data, uint64_t n_items){
+    file.write(reinterpret_cast<char*>(data), sizeof(T)*n_items);
+  }
+
+  template <typename T>
+  void fileread(std::ifstream & file, T & data){
+    file.read(reinterpret_cast<char*>(&data), sizeof(T));
+  }
+
+  template <typename T>
+  void fileread_array(std::ifstream & file, T * data, uint64_t n_items){
+    file.read(reinterpret_cast<char*>(data), sizeof(T)*n_items);
+  }
+
+  void write_out_csr(std::string filename){
+
+    std::ofstream outfile(filename, std::ios::binary);
+
+    printf("Writing out %lu rows %lu cols %lu nnz\n", number_of_rows, number_of_columns, number_of_nonzeros);
+    printf("Datatype sizes, %lu %lu %lu\n", sizeof(number_of_rows), sizeof(number_of_columns), sizeof(number_of_nonzeros));
+
+
+    filewrite(outfile, number_of_rows);
+    filewrite(outfile, number_of_columns);
+    filewrite(outfile, number_of_nonzeros);
+
+    assert(space == memory_space_t::host);
+
+    offset_t * output_rows = memory::raw_pointer_cast(row_offsets.data());
+
+  // vector_t<index_t, space> column_indices;  // Aj
+  // vector_t<value_t, space> nonzero_values;  // Ax
+
+    printf("First and last: %lu %lu\n", output_rows[0], output_rows[number_of_rows]);
+
+    filewrite_array(outfile, output_rows, number_of_rows+1);
+    // for (uint64_t i=0; i < number_of_rows+1; i++){
+    //   outfile << output_rows[i] << " ";
+    // }
+
+    index_t * output_cols = memory::raw_pointer_cast(column_indices.data());
+
+    // for (uint64_t i=0; i < number_of_nonzeros; i++){
+    //   outfile << output_cols[i] << " ";
+    // }
+
+    filewrite_array(outfile, output_cols, number_of_nonzeros);
+
+    printf("First and last: %lu %lu\n", output_cols[0], output_cols[number_of_nonzeros-1]);
+
+    value_t * output_vals = memory::raw_pointer_cast(nonzero_values.data());
+
+    // for (uint64_t i = 0; i < number_of_nonzeros; i++){
+    //   outfile << output_vals[i] << " ";
+    // }
+
+    filewrite_array(outfile, output_vals, number_of_nonzeros);
+
+    printf("First and last: %f %f\n", output_vals[0], output_vals[number_of_nonzeros-1]);
+
+  }
+
+  void read_in_csr(std::string filename){
+    std::ifstream infile(filename, std::ios::binary);
+
+    fileread(infile, number_of_rows);
+    fileread(infile, number_of_columns);
+    fileread(infile, number_of_nonzeros);
+    //infile >> number_of_rows >> number_of_columns >> number_of_nonzeros;
+
+    printf("File with %lu rows %lu cols %lu nnz\n", number_of_rows, number_of_columns, number_of_nonzeros);
+    //printf("Datatype sizes, %lu %lu %lu\n", sizeof(number_of_rows), sizeof(number_of_columns), sizeof(number_of_nonzeros));
+
+
+
+    thrust::host_vector<offset_t> h_row_offsets(number_of_rows + 1);
+    thrust::host_vector<index_t> h_column_indices(number_of_nonzeros);
+    thrust::host_vector<value_t> h_nonzero_values(number_of_nonzeros);
+
+    // for (uint64_t i = 0; i < number_of_rows; i++){
+    //   infile >> h_row_offsets[i];
+    // }
+
+    offset_t * input_rows = memory::raw_pointer_cast(h_row_offsets.data());
+
+    fileread_array(infile, input_rows, number_of_rows+1);
+
+    printf("First and last: %lu %lu\n", h_row_offsets[0], h_row_offsets[number_of_rows]);
+
+    // for (uint64_t i = 0; i < number_of_nonzeros; i++){
+    //   infile >> h_column_indices[i];
+    // }
+
+    index_t * input_cols = memory::raw_pointer_cast(h_column_indices.data());
+
+    fileread_array(infile, input_cols, number_of_nonzeros);
+
+    printf("First and last: %lu %lu\n", h_column_indices[0], h_column_indices[number_of_nonzeros-1]);
+
+
+    // for (uint64_t i = 0; i < number_of_nonzeros; i++){
+    //   infile >> h_nonzero_values[i];
+    // }
+
+    value_t * input_vals = memory::raw_pointer_cast(h_nonzero_values.data());
+
+    fileread_array(infile, input_vals, number_of_nonzeros);
+
+    printf("First and last: %f %f\n", h_nonzero_values[0], h_nonzero_values[number_of_nonzeros-1]);
+
+    row_offsets = h_row_offsets;
+    column_indices = h_column_indices;
+    nonzero_values = h_nonzero_values;
+
+    printf("Done with read\n");
+
   }
 
 };  // struct csr_t

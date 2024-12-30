@@ -66,6 +66,10 @@ __device__ static double atomicMin(double* address, double value) {
   return __longlong_as_double(old);
 }
 
+__device__ static uint64_t atomicMin(uint64_t * address, uint64_t  value) {
+  return atomicMin((unsigned long long int *)address, (unsigned long long int) value);
+}
+
 /**
  * @brief Wrapper around CUDA's natively supported atomicMax types.
  *

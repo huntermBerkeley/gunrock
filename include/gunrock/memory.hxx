@@ -64,6 +64,13 @@ inline type_t* allocate(std::size_t size,
                         memory_space_t space = memory_space_t::device) {
   void* pointer = nullptr;
   if (size) {
+
+    if (space == device) {
+      printf("Alloced %lu bytes on dev\n", size);
+    } else {
+       printf("Alloced %lu bytes on host\n", size);
+    }
+   
     error::throw_if_exception((device == space)
                                   ? cudaMalloc(&pointer, size)
                                   : cudaMallocHost(&pointer, size));

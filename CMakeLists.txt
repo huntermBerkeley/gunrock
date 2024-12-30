@@ -51,6 +51,13 @@ project(essentials
   HOMEPAGE_URL "https://github.com/gunrock/gunrock"
 )
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  
+  message("Adding CMAKE_CUDA_FLAGS")
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G -g")
+
+endif()
+
 ####################################################
 ############### SET SM ARCHITECTURE ################
 ####################################################
@@ -152,10 +159,13 @@ target_include_directories(essentials
   INTERFACE ${CMAKE_MODULES_INCLUDE_DIR}
 )
 
+add_subdirectory(caching)
+
 ####################################################
 ############ TARGET LINK LIBRARIES #################
 ####################################################
 target_link_libraries(essentials
+  INTERFACE caching
   INTERFACE curand
   INTERFACE cuda
   INTERFACE cusparse
@@ -185,6 +195,8 @@ set(CXX_FLAGS
     -Wno-strict-aliasing
     -Wno-unused-function
     -Wno-format-security
+    -static
+    -mno-avx
     # -Werror
     # -vvv
   >
@@ -202,6 +214,7 @@ set(CUDA_DEBUG_FLAGS
   --ptxas-options -v
   --debug # Host debug
   --device-debug # Device debug
+  -static
 )
 
 ####################################################

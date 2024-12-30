@@ -92,9 +92,14 @@ __global__ void merge_path_v2_kernel(graph_t G,
                    ? G.get_number_of_edges()
                    : output.get_number_of_elements();
 
-  auto row_end_offsets = (input_type == advance_io_type_t::graph)
-                             ? G.get_row_offsets() + 1
-                             : segments + 1;
+  //auto last = G.get_row_offsets() + 1;
+
+  // auto row_end_offsets = (input_type == advance_io_type_t::graph)
+  //                            ? G.get_row_offsets() + 1
+  //                            : segments + 1;
+
+  auto row_end_offsets = G.get_row_offsets() + 1;
+                                       
 
   int tile_idx = (blockIdx.x * gridDim.y) + blockIdx.y;  // Tile Index
   if (tile_idx >= num_merge_tiles)

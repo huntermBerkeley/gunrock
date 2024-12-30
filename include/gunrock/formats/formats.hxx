@@ -26,6 +26,12 @@ struct coo_t;
 
 template <memory_space_t space,
           typename index_t,
+          typename nz_size_t,
+          typename value_t>
+struct coo_no_vector;
+
+template <memory_space_t space,
+          typename index_t,
           typename offset_t,
           typename value_t>
 struct csr_t;
@@ -36,9 +42,12 @@ template <memory_space_t space,
           typename value_t>
 struct csc_t;
 
+
+
 }  // namespace format
 }  // namespace gunrock
 
 #include <gunrock/formats/coo.hxx>
 #include <gunrock/formats/csc.hxx>
 #include <gunrock/formats/csr.hxx>
+#include <gunrock/formats/coo_no_vector.hxx>

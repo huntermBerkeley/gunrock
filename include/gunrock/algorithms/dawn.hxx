@@ -91,7 +91,7 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
                     edge_t const& edge,        // edge
                     weight_t const& weight     // weight (tuple).
                     ) -> bool {
-      auto old_distance = math::atomic::min(&distances[neighbor], iteration);
+      auto old_distance = math::atomic::min((uint64_t *)&distances[neighbor], (uint64_t) iteration);
       return (iteration < old_distance);
     };
     // Execute advance operator on the provided lambda

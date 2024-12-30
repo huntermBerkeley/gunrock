@@ -27,6 +27,15 @@ __device__ __host__ __forceinline__ type_t load(type_t* ptr) {
 #endif
 }
 
+template <typename cache_ptr, typename type_t>
+__device__ __host__ __forceinline__ type_t load(cache_ptr ptr, uint64_t index) {
+#ifdef __CUDA_ARCH__
+  return ptr[index];
+#else
+  return ptr.internal_memory[index];
+#endif
+}
+
 /**
  * @brief Uses a cached store to store a given value into a pointer.
  */

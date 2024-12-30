@@ -105,6 +105,7 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
     auto visited = P->visited.data().get();
 
     auto iteration = this->iteration;
+    
 
     auto shortest_path = [distances, single_source] __host__ __device__(
                              vertex_t const& source,    // ... source

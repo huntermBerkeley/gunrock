@@ -21,6 +21,9 @@
 #include <gunrock/error.hxx>
 #include <gunrock/graph/properties.hxx>
 
+
+#include <caching/pointers/progress.cuh>
+
 namespace gunrock {
 namespace io {
 
@@ -151,11 +154,17 @@ struct matrix_market_t {
       format = matrix_market_format_t::array;
 
     if (mm_is_pattern(code)) {
+
+      printf("Matrix is pattern\n");
+
       properties.weighted = false;
       data = matrix_market_data_t::pattern;
 
       // pattern matrix defines sparsity pattern, but not values
       for (vertex_t i = 0; i < num_nonzeros; ++i) {
+
+
+
         std::size_t row_index{0}, col_index{0};
         auto num_assigned = fscanf(file, " %zu %zu \n", &row_index, &col_index);
         error::throw_if_exception(num_assigned != 2,
@@ -169,8 +178,17 @@ struct matrix_market_t {
         coo.column_indices[i] = (vertex_t)col_index - 1;
         coo.nonzero_values[i] =
             (weight_t)1.0;  // use value 1.0 for all nonzero entries
+
+        display_progress(i, num_nonzeros, .01);
+
+
       }
+
+      end_bar(num_nonzeros);
+
     } else if (mm_is_real(code) || mm_is_integer(code)) {
+
+      printf("Matrix has values\n");
       properties.weighted = true;
       if (mm_is_real(code))
         data = matrix_market_data_t::real;
@@ -194,13 +212,20 @@ struct matrix_market_t {
         coo.row_indices[i] = (vertex_t)row_index - 1;
         coo.column_indices[i] = (vertex_t)col_index - 1;
         coo.nonzero_values[i] = (weight_t)weight;
+
+        display_progress(i, num_nonzeros, .01);
+
       }
+
+      end_bar(num_nonzeros);
     } else {
       std::cerr << "Unrecognized matrix market format type" << std::endl;
       exit(1);
     }
 
     if (mm_is_symmetric(code)) {  // duplicate off diagonal entries
+
+      printf("Matrix is symmetric\n");
       properties.symmetric = true;
       properties.directed = false;
       scheme = matrix_market_storage_scheme_t::symmetric;
@@ -208,10 +233,15 @@ struct matrix_market_t {
       for (vertex_t i = 0; i < coo.number_of_nonzeros; ++i) {
         if (coo.row_indices[i] != coo.column_indices[i])
           ++off_diagonals;
+
+        display_progress(i, coo.number_of_nonzeros, .01);
       }
+
+      end_bar(coo.number_of_nonzeros);
 
       vertex_t _nonzeros =
           2 * off_diagonals + (coo.number_of_nonzeros - off_diagonals);
+
 
       vector_t<vertex_t, memory_space_t::host> new_I(_nonzeros);
       vector_t<vertex_t, memory_space_t::host> new_J(_nonzeros);
@@ -238,7 +268,11 @@ struct matrix_market_t {
           _V[ptr] = coo.nonzero_values[i];
           ++ptr;
         }
+
+        display_progress(i, coo.number_of_nonzeros, .01);
       }
+
+      end_bar(coo.number_of_nonzeros);
       coo.row_indices = new_I;
       coo.column_indices = new_J;
       coo.nonzero_values = new_V;
@@ -252,6 +286,400 @@ struct matrix_market_t {
 
     return {properties, coo};
   }
+
+  gunrock::graph::graph_properties_t
+  load_properties(std::string _filename) {
+    filename = _filename;
+    dataset = util::extract_dataset(util::extract_filename(filename));
+
+    file_t file;
+
+    // Load MTX information
+    if ((file = fopen(filename.c_str(), "r")) == NULL) {
+      std::cerr << "File could not be opened: " << filename << std::endl;
+      exit(1);
+    }
+
+    if (mm_read_banner(file, &code) != 0) {
+      std::cerr << "Could not process Matrix Market banner" << std::endl;
+      exit(1);
+    }
+
+    // Make sure we're actually reading a matrix, and not an array
+    if (mm_is_array(code)) {
+      std::cerr << "File is not a sparse matrix" << std::endl;
+      exit(1);
+    }
+
+    std::size_t num_rows, num_columns, num_nonzeros;
+
+    if ((mm_read_mtx_crd_size(file, &num_rows, &num_columns, &num_nonzeros)) !=
+        0) {
+      std::cerr << "Could not read file info (M, N, NNZ)" << std::endl;
+      exit(1);
+    }
+
+    error::throw_if_exception(
+        num_rows >= std::numeric_limits<vertex_t>::max() ||
+            num_columns >= std::numeric_limits<vertex_t>::max(),
+        "vertex_t overflow");
+    error::throw_if_exception(
+        num_nonzeros >= std::numeric_limits<edge_t>::max(), "edge_t overflow");
+
+    // return values
+    // mtx are generally written as coordinate format
+    // format::coo_t<memory_space_t::host, vertex_t, edge_t, weight_t> coo(
+    //     (vertex_t)num_rows, (vertex_t)num_columns, (edge_t)num_nonzeros);
+    gunrock::graph::graph_properties_t properties;
+
+    if (mm_is_coordinate(code))
+      format = matrix_market_format_t::coordinate;
+    else
+      format = matrix_market_format_t::array;
+
+    if (mm_is_pattern(code)) {
+
+      printf("Matrix is pattern\n");
+
+      properties.weighted = false;
+      data = matrix_market_data_t::pattern;
+
+      // pattern matrix defines sparsity pattern, but not values
+      for (vertex_t i = 0; i < num_nonzeros; ++i) {
+
+
+
+        // std::size_t row_index{0}, col_index{0};
+        // auto num_assigned = fscanf(file, " %zu %zu \n", &row_index, &col_index);
+        // error::throw_if_exception(num_assigned != 2,
+        //                           "Could not read edge from market file");
+        // error::throw_if_exception(row_index == 0,
+        //                           "Market file is zero-indexed");
+        // error::throw_if_exception(col_index == 0,
+        //                           "Market file is zero-indexed");
+        // set and adjust from 1-based to 0-based indexing
+        // coo.row_indices[i] = (vertex_t)row_index - 1;
+        // coo.column_indices[i] = (vertex_t)col_index - 1;
+        // coo.nonzero_values[i] =
+        //     (weight_t)1.0;  // use value 1.0 for all nonzero entries
+
+        display_progress(i, num_nonzeros, .01);
+
+
+      }
+
+      end_bar(num_nonzeros);
+
+    } else if (mm_is_real(code) || mm_is_integer(code)) {
+
+      printf("Matrix has values\n");
+      properties.weighted = true;
+      if (mm_is_real(code))
+        data = matrix_market_data_t::real;
+      else
+        data = matrix_market_data_t::integer;
+
+      // for (vertex_t i = 0; i < coo.number_of_nonzeros; ++i) {
+      //   std::size_t row_index{0}, col_index{0};
+      //   double weight{0.0};
+
+      //   auto num_assigned =
+      //       fscanf(file, " %zu %zu %lf \n", &row_index, &col_index, &weight);
+
+      //   error::throw_if_exception(
+      //       num_assigned != 3, "Could not read weighted edge from market file");
+      //   error::throw_if_exception(row_index == 0,
+      //                             "Market file is zero-indexed");
+      //   error::throw_if_exception(col_index == 0,
+      //                             "Market file is zero-indexed");
+
+      //   coo.row_indices[i] = (vertex_t)row_index - 1;
+      //   coo.column_indices[i] = (vertex_t)col_index - 1;
+      //   coo.nonzero_values[i] = (weight_t)weight;
+
+      //   display_progress(i, num_nonzeros, .01);
+
+      // }
+
+      //end_bar(num_nonzeros);
+    } else {
+      std::cerr << "Unrecognized matrix market format type" << std::endl;
+      exit(1);
+    }
+
+    if (mm_is_symmetric(code)) {  // duplicate off diagonal entries
+
+      printf("Matrix is symmetric\n");
+      properties.symmetric = true;
+      properties.directed = false;
+      scheme = matrix_market_storage_scheme_t::symmetric;
+      // vertex_t off_diagonals = 0;
+      // for (vertex_t i = 0; i < coo.number_of_nonzeros; ++i) {
+      //   if (coo.row_indices[i] != coo.column_indices[i])
+      //     ++off_diagonals;
+
+      //   display_progress(i, coo.number_of_nonzeros, .01);
+      // }
+
+      // end_bar(coo.number_of_nonzeros);
+
+      // vertex_t _nonzeros =
+      //     2 * off_diagonals + (coo.number_of_nonzeros - off_diagonals);
+
+
+      // vector_t<vertex_t, memory_space_t::host> new_I(_nonzeros);
+      // vector_t<vertex_t, memory_space_t::host> new_J(_nonzeros);
+      // vector_t<weight_t, memory_space_t::host> new_V(_nonzeros);
+
+      // vertex_t* _I = new_I.data();
+      // vertex_t* _J = new_J.data();
+      // weight_t* _V = new_V.data();
+
+      // vertex_t ptr = 0;
+      // for (vertex_t i = 0; i < coo.number_of_nonzeros; ++i) {
+      //   if (coo.row_indices[i] != coo.column_indices[i]) {
+      //     _I[ptr] = coo.row_indices[i];
+      //     _J[ptr] = coo.column_indices[i];
+      //     _V[ptr] = coo.nonzero_values[i];
+      //     ++ptr;
+      //     _J[ptr] = coo.row_indices[i];
+      //     _I[ptr] = coo.column_indices[i];
+      //     _V[ptr] = coo.nonzero_values[i];
+      //     ++ptr;
+      //   } else {
+      //     _I[ptr] = coo.row_indices[i];
+      //     _J[ptr] = coo.column_indices[i];
+      //     _V[ptr] = coo.nonzero_values[i];
+      //     ++ptr;
+      //   }
+
+      //   display_progress(i, coo.number_of_nonzeros, .01);
+      // }
+
+      // end_bar(coo.number_of_nonzeros);
+      // coo.row_indices = new_I;
+      // coo.column_indices = new_J;
+      // coo.nonzero_values = new_V;
+      // coo.number_of_nonzeros = _nonzeros;
+    }  // end symmetric case
+    else {
+      properties.symmetric = false;
+      properties.directed = true;
+    }
+    fclose(file);
+
+    return properties;
+  }
+
+  //custom loading scheme for really large data.
+  // some internal error in the thrust allocator prevents it from handling this correctly.
+  std::tuple<gunrock::graph::graph_properties_t,
+             format::coo_no_vector<gunrock::memory::memory_space_t::host,
+                           vertex_t,
+                           edge_t,
+                           weight_t>>
+  load_large(std::string _filename) {
+    filename = _filename;
+    dataset = util::extract_dataset(util::extract_filename(filename));
+
+    file_t file;
+
+    // Load MTX information
+    if ((file = fopen(filename.c_str(), "r")) == NULL) {
+      std::cerr << "File could not be opened: " << filename << std::endl;
+      exit(1);
+    }
+
+    if (mm_read_banner(file, &code) != 0) {
+      std::cerr << "Could not process Matrix Market banner" << std::endl;
+      exit(1);
+    }
+
+    // Make sure we're actually reading a matrix, and not an array
+    if (mm_is_array(code)) {
+      std::cerr << "File is not a sparse matrix" << std::endl;
+      exit(1);
+    }
+
+    std::size_t num_rows, num_columns, num_nonzeros;
+
+    if ((mm_read_mtx_crd_size(file, &num_rows, &num_columns, &num_nonzeros)) !=
+        0) {
+      std::cerr << "Could not read file info (M, N, NNZ)" << std::endl;
+      exit(1);
+    }
+
+    error::throw_if_exception(
+        num_rows >= std::numeric_limits<vertex_t>::max() ||
+            num_columns >= std::numeric_limits<vertex_t>::max(),
+        "vertex_t overflow");
+    error::throw_if_exception(
+        num_nonzeros >= std::numeric_limits<edge_t>::max(), "edge_t overflow");
+
+    // return values
+    // mtx are generally written as coordinate format
+    format::coo_no_vector<memory_space_t::host, vertex_t, edge_t, weight_t> coo(
+        (vertex_t)num_rows, (vertex_t)num_columns, (edge_t)num_nonzeros);
+    gunrock::graph::graph_properties_t properties;
+
+    if (mm_is_coordinate(code))
+      format = matrix_market_format_t::coordinate;
+    else
+      format = matrix_market_format_t::array;
+
+    if (mm_is_pattern(code)) {
+
+      printf("Matrix is pattern\n");
+
+      properties.weighted = false;
+      data = matrix_market_data_t::pattern;
+
+      // pattern matrix defines sparsity pattern, but not values
+      for (vertex_t i = 0; i < num_nonzeros; ++i) {
+
+
+
+        std::size_t row_index{0}, col_index{0};
+        auto num_assigned = fscanf(file, " %zu %zu \n", &row_index, &col_index);
+        error::throw_if_exception(num_assigned != 2,
+                                  "Could not read edge from market file");
+        error::throw_if_exception(row_index == 0,
+                                  "Market file is zero-indexed");
+        error::throw_if_exception(col_index == 0,
+                                  "Market file is zero-indexed");
+        // set and adjust from 1-based to 0-based indexing
+        coo.row_indices[i] = (vertex_t)row_index - 1;
+        coo.column_indices[i] = (vertex_t)col_index - 1;
+        coo.nonzero_values[i] =
+            (weight_t)1.0;  // use value 1.0 for all nonzero entries
+
+        display_progress(i, num_nonzeros, .01);
+
+
+      }
+
+      end_bar(num_nonzeros);
+
+    } else if (mm_is_real(code) || mm_is_integer(code)) {
+
+      printf("Matrix has values\n");
+      properties.weighted = true;
+      if (mm_is_real(code))
+        data = matrix_market_data_t::real;
+      else
+        data = matrix_market_data_t::integer;
+
+      for (vertex_t i = 0; i < coo.number_of_nonzeros; ++i) {
+        std::size_t row_index{0}, col_index{0};
+        double weight{0.0};
+
+        auto num_assigned =
+            fscanf(file, " %zu %zu %lf \n", &row_index, &col_index, &weight);
+
+        error::throw_if_exception(
+            num_assigned != 3, "Could not read weighted edge from market file");
+        error::throw_if_exception(row_index == 0,
+                                  "Market file is zero-indexed");
+        error::throw_if_exception(col_index == 0,
+                                  "Market file is zero-indexed");
+
+        coo.row_indices[i] = (vertex_t)row_index - 1;
+        coo.column_indices[i] = (vertex_t)col_index - 1;
+        coo.nonzero_values[i] = (weight_t)weight;
+
+        display_progress(i, num_nonzeros, .01);
+
+      }
+
+      end_bar(num_nonzeros);
+    } else {
+      std::cerr << "Unrecognized matrix market format type" << std::endl;
+      exit(1);
+    }
+
+    if (mm_is_symmetric(code)) {  // duplicate off diagonal entries
+
+      printf("Matrix is symmetric\n");
+      properties.symmetric = true;
+      properties.directed = false;
+      scheme = matrix_market_storage_scheme_t::symmetric;
+      vertex_t off_diagonals = 0;
+      for (vertex_t i = 0; i < coo.number_of_nonzeros; ++i) {
+        if (coo.row_indices[i] != coo.column_indices[i])
+          ++off_diagonals;
+
+        display_progress(i, coo.number_of_nonzeros, .01);
+      }
+
+      end_bar(coo.number_of_nonzeros);
+
+      vertex_t _nonzeros =
+          2 * off_diagonals + (coo.number_of_nonzeros - off_diagonals);
+
+
+
+      vertex_t * _I;
+      vertex_t* _J;
+      weight_t * _V;
+
+
+
+      cudaMallocHost((void **)&_I, sizeof(vertex_t)*_nonzeros);
+      cudaMallocHost((void **)&_J, sizeof(vertex_t)*_nonzeros);
+      cudaMallocHost((void **)&_V, sizeof(weight_t)*_nonzeros);
+
+
+      // vector_t<vertex_t, memory_space_t::host> new_I(_nonzeros);
+      // vector_t<vertex_t, memory_space_t::host> new_J(_nonzeros);
+      // vector_t<weight_t, memory_space_t::host> new_V(_nonzeros);
+
+      // vertex_t* _I = new_I.data();
+      // vertex_t* _J = new_J.data();
+      // weight_t* _V = new_V.data();
+
+      vertex_t ptr = 0;
+      for (vertex_t i = 0; i < coo.number_of_nonzeros; ++i) {
+        if (coo.row_indices[i] != coo.column_indices[i]) {
+          _I[ptr] = coo.row_indices[i];
+          _J[ptr] = coo.column_indices[i];
+          _V[ptr] = coo.nonzero_values[i];
+          ++ptr;
+          _J[ptr] = coo.row_indices[i];
+          _I[ptr] = coo.column_indices[i];
+          _V[ptr] = coo.nonzero_values[i];
+          ++ptr;
+        } else {
+          _I[ptr] = coo.row_indices[i];
+          _J[ptr] = coo.column_indices[i];
+          _V[ptr] = coo.nonzero_values[i];
+          ++ptr;
+        }
+
+        display_progress(i, coo.number_of_nonzeros, .01);
+      }
+
+      end_bar(coo.number_of_nonzeros);
+
+
+      cudaFreeHost(coo.row_indices);
+      cudaFreeHost(coo.column_indices);
+      cudaFreeHost(coo.nonzero_values);
+
+      coo.row_indices = _I;
+      coo.column_indices = _J;
+      coo.nonzero_values = _V;
+      coo.number_of_nonzeros = _nonzeros;
+    }  // end symmetric case
+    else {
+      properties.symmetric = false;
+      properties.directed = true;
+    }
+    fclose(file);
+
+    return {properties, coo};
+  }
+
+
 };
 
 }  // namespace io
